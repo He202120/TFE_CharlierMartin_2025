@@ -30,7 +30,6 @@
 
 // Autres constantes
 #define NUM_FREQS 1
-const uint16_t frequencies[NUM_FREQS] = {5658};
 const unsigned long displayInterval = 500;
 
 #endif

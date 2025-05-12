@@ -28,6 +28,22 @@ export default function Navbar() {
           >
             Effets
           </Link>
+          <Link
+            to="/pilots"
+            className={`hover:underline ${
+                location.pathname === "/pilots" ? "text-blue-400" : ""
+            }`}
+            >
+            Gestion Pilotes
+          </Link>
+          <Link
+            to="/course"
+            className={`hover:underline ${
+                location.pathname === "/course" ? "text-blue-400" : ""
+            }`}
+            >
+            Course
+           </Link>
         </div>
       </div>
     </nav>

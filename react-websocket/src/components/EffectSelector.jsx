@@ -15,7 +15,7 @@ export default function EffectSelector() {
 
   const handleSelect = (effect, event) => {
     setSelected(effect);
-    event.target.blur(); // retire le focus pour forcer le redraw
+    event.target.blur(); 
   };
 
   return (

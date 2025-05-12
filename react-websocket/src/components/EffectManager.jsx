@@ -1,6 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import io from "socket.io-client";
 
-const effects = [
+const socket = io("https://192.168.4.1", {
+  path: "/socket.io",
+  transports: ["websocket"],
+  rejectUnauthorized: false,
+});
+
+const EFFECTS = [
   "Rainbow",
   "Blink",
   "Static",
@@ -8,87 +15,121 @@ const effects = [
   "Wipe",
   "Color Cycle",
   "Strobe",
+  "Off",
 ];
 
-export default function EffectManager({ connectedDevices, socket }) {
-  const [selectedEffect, setSelectedEffect] = useState(null);
+export default function EffectManager() {
+  const [connectedDevices, setConnectedDevices] = useState([]);
+  const [selectedEffect, setSelectedEffect] = useState("");
   const [selectedDevices, setSelectedDevices] = useState([]);
-  const [selectAll, setSelectAll] = useState(false);
 
-  const toggleDevice = (deviceId) => {
+  useEffect(() => {
+    socket.on("rssi_update", (data) => {
+      setConnectedDevices((prev) => {
+        const updated = new Set(prev);
+        updated.add(data.id);
+        return Array.from(updated);
+      });
+    });
+
+    socket.on("device_disconnected", (data) => {
+      setConnectedDevices((prev) => prev.filter((id) => id !== data.id));
+      setSelectedDevices((prev) => prev.filter((id) => id !== data.id));
+    });
+
+    return () => {
+      socket.off("rssi_update");
+      socket.off("device_disconnected");
+    };
+  }, []);
+
+  const toggleDevice = (id) => {
+    if (selectedDevices.includes("ALL")) return;
+
     setSelectedDevices((prev) =>
-      prev.includes(deviceId)
-        ? prev.filter((id) => id !== deviceId)
-        : [...prev, deviceId]
+      prev.includes(id) ? prev.filter((d) => d !== id) : [...prev, id]
     );
   };
 
-  const handleSelectAll = () => {
-    setSelectAll((prev) => !prev);
+  const selectAll = () => {
+    setSelectedDevices(["ALL"]);
+  };
+
+  const clearSelection = () => {
     setSelectedDevices([]);
   };
 
-  const handleApply = () => {
-    if (!selectedEffect) return;
+  const handleApplyEffect = () => {
+    if (!selectedEffect || selectedDevices.length === 0) return;
 
-    const targets = selectAll ? ["ALL"] : selectedDevices;
     socket.emit("set_effect", {
       effect: selectedEffect,
-      targets,
+      targets: selectedDevices,
     });
   };
 
-  return (
-    <div className="p-4 max-w-screen-md mx-auto">
-      <h2 className="text-xl font-semibold text-white mb-4">Sélection d’effet</h2>
+  const hasESP = connectedDevices.length > 0;
+  const hasEffect = selectedEffect !== "";
+  const hasSelection = selectedDevices.length > 0;
+  const isDisabled = !hasESP || !hasEffect || !hasSelection;
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-6">
-        {effects.map((effect) => (
-          <button
-            key={effect}
-            onClick={() => setSelectedEffect(effect)}
-            className={`px-3 py-2 rounded text-white transition ${
-              selectedEffect === effect ? "bg-green-600" : "bg-gray-700 hover:bg-gray-600"
-            }`}
-          >
+  return (
+    <div className="p-4 bg-gray-800 rounded shadow text-white">
+      <h2 className="text-lg font-semibold mb-4">Effets lumineux</h2>
+
+      <select
+        value={selectedEffect}
+        onChange={(e) => setSelectedEffect(e.target.value)}
+        className="bg-gray-700 p-2 rounded mb-4 w-full"
+      >
+        <option value="">Choisir un effet</option>
+        {EFFECTS.map((effect) => (
+          <option key={effect} value={effect}>
             {effect}
-          </button>
+          </option>
         ))}
-      </div>
+      </select>
 
       <div className="mb-4">
-        <label className="flex items-center gap-2 text-white">
-          <input
-            type="checkbox"
-            checked={selectAll}
-            onChange={handleSelectAll}
-          />
-          Tous les ESP32
-        </label>
+        <p className="mb-2">Cibles :</p>
+
+        {hasESP ? (
+          <>
+            <div className="flex gap-2 mb-2">
+              <button onClick={selectAll} className="text-sm text-blue-400 underline">
+                Tous les ESP
+              </button>
+              <button onClick={clearSelection} className="text-sm text-red-400 underline">
+                Effacer
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              {connectedDevices.map((id) => (
+                <label key={id} className="flex items-center gap-1 text-sm">
+                  <input
+                    type="checkbox"
+                    disabled={selectedDevices.includes("ALL")}
+                    checked={selectedDevices.includes("ALL") || selectedDevices.includes(id)}
+                    onChange={() => toggleDevice(id)}
+                  />
+                  {id}
+                </label>
+              ))}
+            </div>
+          </>
+        ) : (
+          <p className="text-sm text-gray-400">Aucun ESP32 connecté</p>
+        )}
       </div>
 
-      {!selectAll && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-4">
-          {connectedDevices.map((deviceId) => (
-            <label
-              key={deviceId}
-              className="flex items-center gap-2 text-white bg-gray-700 rounded px-2 py-1"
-            >
-              <input
-                type="checkbox"
-                checked={selectedDevices.includes(deviceId)}
-                onChange={() => toggleDevice(deviceId)}
-              />
-              {deviceId}
-            </label>
-          ))}
-        </div>
-      )}
-
       <button
-        onClick={handleApply}
-        disabled={!selectedEffect || (!selectAll && selectedDevices.length === 0)}
-        className="bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-50"
+        onClick={handleApplyEffect}
+        disabled={isDisabled}
+        className={`mt-4 px-4 py-2 rounded w-full font-semibold ${
+          isDisabled
+            ? "bg-gray-600 cursor-not-allowed"
+            : "bg-blue-600 hover:bg-blue-700"
+        }`}
       >
         Appliquer
       </button>

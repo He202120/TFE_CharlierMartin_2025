@@ -10,5 +10,8 @@ void startFade();
 void startWipe();
 void startColorCycle();
 void startStrobe();
+void startStaticColor(uint8_t r, uint8_t g, uint8_t b);
+void applyRaceEffect(const String& effect, const String& color);
+void stopEffect();
 
 #endif
