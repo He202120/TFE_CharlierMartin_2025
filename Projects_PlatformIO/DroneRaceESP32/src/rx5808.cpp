@@ -1,3 +1,4 @@
+
 #include "rx5808.h"
 #include <Arduino.h>
 
@@ -16,7 +17,24 @@ void RX5808::init() {
 }
 
 void RX5808::setFrequency(uint16_t frequency) {
-    // Implémentation vide ou appel à getFrequencyIndex() + setFrequencyByIndex() si tu l'utilises
+    // Convertit la fréquence MHz vers valeur N pour RX5808
+    uint16_t N = (frequency - 479) / 2;
+    uint16_t command = 0b1000000000000000 | (N & 0x7FF); // MSB=1 + 11 bits pour N
+
+    // Transmission SPI "bit-bang"
+    digitalWrite(slaveSelectPin, LOW);
+    delayMicroseconds(1);
+
+    for (int i = 15; i >= 0; i--) {
+        digitalWrite(spiClockPin, LOW);
+        digitalWrite(spiDataPin, (command >> i) & 1);
+        delayMicroseconds(1);
+        digitalWrite(spiClockPin, HIGH);
+        delayMicroseconds(1);
+    }
+
+    digitalWrite(slaveSelectPin, HIGH);
+    delay(2);  // Temps de stabilisation du RX5808
 }
 
 uint16_t RX5808::readRssi() {

@@ -25,29 +25,27 @@ uint16_t rawRssiValues[NUM_FREQS];
 String deviceId = DEVICE_ID;
 
 int numFrequencies = 0;
+int scanIndex = 0;
 
 bool calibrated = false;
 unsigned long calibrationStart = 0;
-const int calibrationDuration = 2000;
+const int calibrationDuration = 5000;
 
-unsigned long effectStartTime = 0;
-bool effectActive = false;
-String currentEffect = "";
-String currentColor = "";
+unsigned long lastEffectTime[NUM_FREQS] = {0};
+bool effectRunning[NUM_FREQS] = {false};
 
 void setup_wifi() {
+  Serial.print("Connexion WiFi...");
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
+    Serial.print(".");
   }
+  Serial.println("Connecté !");
 }
 
 void handleEffect(const String& effect) {
   applyRaceEffect(effect, "");
-  effectStartTime = millis();
-  effectActive = true;
-  currentEffect = effect;
-  currentColor = "";
 }
 
 void callback(char* topic, byte* payload, unsigned int length) {
@@ -57,6 +55,8 @@ void callback(char* topic, byte* payload, unsigned int length) {
   }
 
   String topicStr = String(topic);
+  Serial.print("MQTT → ");
+  Serial.println(topicStr);
 
   if (topicStr == "esp32/effect" || topicStr == "esp32/" + deviceId + "/effect") {
     handleEffect(message);
@@ -66,7 +66,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
     Serial.println("Message reçu sur topic config:");
     Serial.println(message);
 
-    StaticJsonDocument<512> doc;
+    StaticJsonDocument<1024> doc;
     DeserializationError error = deserializeJson(doc, message);
     if (!error) {
       JsonArray freqArray = doc["frequencies"];
@@ -80,7 +80,12 @@ void callback(char* topic, byte* payload, unsigned int length) {
         colors[i] = colorArray[i].isNull() ? "" : colorArray[i].as<String>();
       }
 
-      numFrequencies = count;  // ← correction essentielle
+      numFrequencies = count;
+      Serial.print("Fréquences configurées : ");
+      Serial.println(numFrequencies);
+
+      calibrationStart = millis();
+      calibrated = false;
     }
   }
 }
@@ -102,10 +107,17 @@ void reconnect() {
 
 void setup() {
   Serial.begin(115200);
+  Serial.println("=== BOOT ===");
+
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
+
   rx.init();
+  Serial.println("RX5808 prêt");
+
   setup_wifi();
+  Serial.println("WiFi prêt");
+
   client.setServer(MQTT_SERVER, MQTT_PORT);
   client.setCallback(callback);
   delay(2000);
@@ -117,6 +129,8 @@ void setup() {
 
   calibrationStart = millis();
   calibrated = false;
+
+  Serial.println("Setup terminé");
 }
 
 void loop() {
@@ -127,20 +141,33 @@ void loop() {
 
   client.loop();
 
+  if (numFrequencies == 0) {
+    delay(5);
+    return;
+  }
+
   if (!calibrated) {
     static float rssiSums[NUM_FREQS] = {0};
     static int sampleCounts = 0;
 
-    for (int i = 0; i < numFrequencies; i++) {
-      rx.setFrequency(frequencies[i]);
-      delay(5);
-      rawRssiValues[i] = rx.readRssi();
-      rssiSums[i] += rawRssiValues[i];
+    rx.setFrequency(frequencies[scanIndex]);
+    delay(30);
+    rx.readRssi();
+    delay(5);
+    rawRssiValues[scanIndex] = rx.readRssi();
+    rssiSums[scanIndex] += rawRssiValues[scanIndex];
+
+    if (++scanIndex >= numFrequencies) {
+      scanIndex = 0;
+      sampleCounts++;
     }
-    sampleCounts++;
 
     if (millis() - calibrationStart >= calibrationDuration) {
       for (int i = 0; i < numFrequencies; i++) {
+        Serial.print("Config reçue : Freq ");
+        Serial.print(frequencies[i]);
+        Serial.print(" - Effet: ");
+        Serial.println(effects[i]);
         baselineRSSI[i] = rssiSums[i] / sampleCounts;
       }
       calibrated = true;
@@ -152,26 +179,46 @@ void loop() {
         Serial.println(baselineRSSI[i]);
       }
     }
+
   } else {
-    for (int i = 0; i < numFrequencies; i++) {
-      rx.setFrequency(frequencies[i]);
-      delay(5);
-      rawRssiValues[i] = rx.readRssi();
-      filteredRssiValues[i] = kalman[i].filter(rawRssiValues[i], 0);
+    rx.setFrequency(frequencies[scanIndex]);
+    delay(30);
+    rx.readRssi();
+    delay(5);
+    rawRssiValues[scanIndex] = rx.readRssi();
+    filteredRssiValues[scanIndex] = kalman[scanIndex].filter(rawRssiValues[scanIndex], 0);
 
-      Serial.print("Freq ");
-      Serial.print(frequencies[i]);
-      Serial.print(" → RSSI: ");
-      Serial.print(filteredRssiValues[i]);
-      Serial.print(" / Seuil: ");
-      Serial.println(baselineRSSI[i] + 80);
+    float threshold = (baselineRSSI[scanIndex] + 80.0f > 450.0f)
+                  ? baselineRSSI[scanIndex] + 80.0f
+                  : 450.0f;
 
-      if (filteredRssiValues[i] > baselineRSSI[i] + 80) {
-        applyRaceEffect(effects[i], colors[i]);
+    Serial.print("Scan index → ");
+    Serial.print(scanIndex);
+    Serial.print(" | Freq ");
+    Serial.print(frequencies[scanIndex]);
+    Serial.print(" → RSSI: ");
+    Serial.print(filteredRssiValues[scanIndex]);
+    Serial.print(" / Seuil: ");
+    Serial.println(threshold);
+
+    if (filteredRssiValues[scanIndex] > threshold) {
+      if (!effectRunning[scanIndex]) {
+        applyRaceEffect(effects[scanIndex], colors[scanIndex]);
+        lastEffectTime[scanIndex] = millis();
+        effectRunning[scanIndex] = true;
         Serial.print("Effet déclenché sur ");
-        Serial.println(frequencies[i]);
+        Serial.println(frequencies[scanIndex]);
       }
     }
+
+    if (effectRunning[scanIndex] && millis() - lastEffectTime[scanIndex] >= 2000) {
+      stopEffect();
+      effectRunning[scanIndex] = false;
+      Serial.print("Effet arrêté sur ");
+      Serial.println(frequencies[scanIndex]);
+    }
+
+    scanIndex = (scanIndex + 1) % numFrequencies;
 
     if (millis() - lastDisplayTime >= displayInterval) {
       lastDisplayTime = millis();
@@ -181,20 +228,6 @@ void loop() {
         client.publish(MQTT_TOPIC_PUB, payload);
       }
     }
-  }
-
-  if (effectActive && millis() - effectStartTime >= 10000) {
-    effectActive = false;
-    currentEffect = "";
-    currentColor = "";
-    stopEffect();
-    Serial.println("Effet coupé automatiquement");
-  }
-
-  if (numFrequencies == 0 && millis() - lastDisplayTime >= displayInterval) {
-    lastDisplayTime = millis();
-    String msg = deviceId + ":0";
-    client.publish(MQTT_TOPIC_PUB, msg.c_str());
   }
 
   delay(5);

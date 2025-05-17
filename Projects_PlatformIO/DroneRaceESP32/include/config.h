@@ -4,9 +4,9 @@
 
 // Pins
 #define RSSI_PIN 34
-#define DATA_PIN 25
-#define SS_PIN 26
-#define CLOCK_PIN 27
+#define DATA_PIN 13
+#define SS_PIN 5
+#define CLOCK_PIN 14
 #define LED_PIN 2
 
 // Leds
@@ -29,7 +29,7 @@
 #define DEVICE_ID "ESP32-1"
 
 // Autres constantes
-#define NUM_FREQS 1
+#define NUM_FREQS 8
 const unsigned long displayInterval = 500;
 
 #endif
