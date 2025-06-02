@@ -1,22 +1,19 @@
-import EffectManager from "../components/EffectManager";
 import { useEffect, useState } from "react";
-import io from "socket.io-client";
-
-const socket = io("https://192.168.4.1", {
-  path: "/socket.io",
-  transports: ["websocket"],
-  rejectUnauthorized: false,
-});
+import { socket } from "../socket";
+import EffectManager from "../components/EffectManager";
 
 export default function EffectsPage() {
   const [devices, setDevices] = useState([]);
 
   useEffect(() => {
+    socket.emit("get_race_status");
+
     socket.on("rssi_update", (data) => {
-      setDevices((prev) => {
-        const exists = prev.includes(data.id);
-        return exists ? prev : [...prev, data.id];
-      });
+      setDevices((prev) => (prev.includes(data.id) ? prev : [...prev, data.id]));
+    });
+
+    socket.on("device_connected", (data) => {
+      setDevices((prev) => (prev.includes(data.id) ? prev : [...prev, data.id]));
     });
 
     socket.on("device_disconnected", (data) => {
@@ -25,13 +22,14 @@ export default function EffectsPage() {
 
     return () => {
       socket.off("rssi_update");
+      socket.off("device_connected");
       socket.off("device_disconnected");
     };
   }, []);
 
   return (
     <div className="min-h-screen bg-gray-800 text-white">
-      <EffectManager connectedDevices={devices} socket={socket} />
+      <EffectManager />
     </div>
   );
 }

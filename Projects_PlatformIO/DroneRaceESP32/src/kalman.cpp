@@ -8,7 +8,6 @@ KalmanFilter::KalmanFilter() {
 }
 
 float KalmanFilter::filter(uint16_t z, uint16_t u) {
-  // Implementation du filtre
   float prediction = x;
   float innovation = z - prediction;
   p = p + q;

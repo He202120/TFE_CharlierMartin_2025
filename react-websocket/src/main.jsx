@@ -6,6 +6,7 @@ import EffectsPage from "./pages/EffectsPage";
 import Navbar from "./components/Navbar";
 import PilotConfigPanel from "./pages/PilotConfigPanel";
 import CoursePage from "./pages/CoursePage";
+import Login from "./pages/Login"
 import "./index.css";
 
 ReactDOM.createRoot(document.getElementById("root")).render(
@@ -17,6 +18,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
         <Route path="/effects" element={<EffectsPage />} />
         <Route path="/pilots" element={<PilotConfigPanel />} />
         <Route path="/course" element={<CoursePage />} />
+        <Route path="/login" element={<Login />} />
       </Routes>
     </Router>
   </React.StrictMode>

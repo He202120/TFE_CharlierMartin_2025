@@ -1,11 +1,5 @@
-import { useState } from "react";
-import io from "socket.io-client";
-
-const socket = io("https://192.168.4.1", {
-  path: "/socket.io",
-  transports: ["websocket"],
-  rejectUnauthorized: false,
-});
+import { useEffect, useState } from "react";
+import { socket } from "../socket";
 
 const bands = {
   L: [5362, 5399, 5436, 5473, 5510, 5547, 5584, 5621],
@@ -18,19 +12,22 @@ const bands = {
 
 const bandKeys = Object.keys(bands);
 const channelNumbers = [1, 2, 3, 4, 5, 6, 7, 8];
-const effects = [
-  "Rainbow",
-  "Blink",
-  "Static",
-  "Fade",
-  "Wipe",
-  "Color Cycle",
-  "Strobe",
+
+const defaultEffects = [
+  { name: "Rainbow", effect: "Rainbow", isDefault: true },
+  { name: "Blink", effect: "Blink", isDefault: true },
+  { name: "Static", effect: "Static", isDefault: true },
+  { name: "Wipe", effect: "Wipe", isDefault: true },
+  { name: "Color Cycle", effect: "Color Cycle", isDefault: true },
+  { name: "Strobe", effect: "Strobe", isDefault: true },
+  { name: "HexaPulse", effect: "HexaPulse", isDefault: true },
+  { name: "HexaWings", effect: "HexaWings", isDefault: true },
+  { name: "RainbowSegment", effect: "RainbowSegment", isDefault: true },
 ];
 
 export default function PilotTable() {
   const [rows, setRows] = useState(
-    Array.from({ length: 8 }, () => ({
+    Array.from({ length: 4 }, () => ({
       active: false,
       band: "R",
       channel: 1,
@@ -39,73 +36,169 @@ export default function PilotTable() {
     }))
   );
 
+  const [savedEffects, setSavedEffects] = useState([]);
+  const [savedConfigs, setSavedConfigs] = useState([]);
+  const [configName, setConfigName] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+  const [saveSuccess, setSaveSuccess] = useState(false);
+
+  useEffect(() => {
+    socket.emit("get_saved_effects");
+    socket.emit("get_pilot_configs");
+
+    socket.on("saved_effects", setSavedEffects);
+    socket.on("pilot_configs", setSavedConfigs);
+    socket.on("pilot_configs_updated", setSavedConfigs);
+    socket.on("load_pilot_config_result", setRows);
+    socket.on("config_save_error", (msg) => {
+      setErrorMessage(msg);
+      setTimeout(() => setErrorMessage(""), 3000);
+    });
+
+    return () => {
+      socket.off("saved_effects");
+      socket.off("pilot_configs");
+      socket.off("pilot_configs_updated");
+      socket.off("load_pilot_config_result");
+      socket.off("config_save_error");
+    };
+  }, []);
+
   const updateRow = (i, key, value) => {
     const updated = [...rows];
     updated[i][key] = value;
     setRows(updated);
   };
 
-  const handleSend = () => {
-    const payload = rows
-      .map((row, index) => ({
+  const handleEffectChange = (i, selectedName) => {
+    const found = [...defaultEffects, ...savedEffects].find((e) => e.name === selectedName);
+    if (!found) return;
+    updateRow(i, "effect", selectedName);
+    updateRow(i, "color", found.color || "#ffffff");
+  };
+
+  const saveCurrentConfig = () => {
+    if (!configName.trim()) {
+      setErrorMessage("Veuillez entrer un nom de configuration.");
+      setTimeout(() => setErrorMessage(""), 3000);
+      return;
+    }
+
+    const allEffects = [...defaultEffects, ...savedEffects];
+    const fullRows = rows.map((row, index) => {
+      const effectObj = allEffects.find((e) => e.name === row.effect);
+      return {
         id: index + 1,
         active: row.active,
         band: row.band,
         channel: row.channel,
         frequency: bands[row.band][row.channel - 1],
-        effect: row.effect,
-        color: row.effect === "Static" ? row.color : null,
-      }))
-      .filter((p) => p.active);
+        effect: effectObj?.effect || row.effect,
+        color:
+          effectObj?.isDefault && row.effect === "Static"
+            ? row.color
+            : effectObj?.color || null,
+      };
+    });
 
-    socket.emit("set_pilots", payload);
+    socket.emit("save_pilot_config", { name: configName.trim(), config: fullRows });
+    setConfigName("");
+    setSaveSuccess(true);
+    setTimeout(() => setSaveSuccess(false), 2000);
+  };
+
+  const deleteConfig = (name) => {
+    socket.emit("delete_pilot_config", name);
+  };
+
+  const loadConfig = (name) => {
+    socket.emit("load_pilot_config", name);
   };
 
   return (
-    <div className="overflow-x-auto">
+    <div className="p-4 text-white">
+      <div className="flex gap-2 items-center mb-4">
+        <input
+          type="text"
+          value={configName}
+          onChange={(e) => setConfigName(e.target.value)}
+          placeholder="Nom de la config"
+          className="bg-gray-700 p-2 rounded w-64"
+        />
+        <button
+          onClick={saveCurrentConfig}
+          className={`${
+            saveSuccess ? "bg-green-600" : "bg-yellow-500 hover:bg-yellow-600"
+          } text-black font-semibold px-4 py-2 rounded`}
+        >
+          {saveSuccess ? "Sauvegardé !" : "Sauvegarder la config"}
+        </button>
+      </div>
+
+      {savedConfigs.length > 0 && (
+        <div className="mb-6">
+          <h3 className="font-semibold mb-2">Configurations existantes :</h3>
+          <div className="flex flex-wrap gap-3">
+            {savedConfigs.map((conf) => (
+              <div
+                key={conf.name}
+                className="bg-gray-700 px-3 py-2 rounded flex items-center gap-2"
+              >
+                <span>{conf.name}</span>
+                <button onClick={() => loadConfig(conf.name)} className="text-blue-400 underline">
+                  Charger
+                </button>
+                <button
+                  onClick={() => deleteConfig(conf.name)}
+                  className="text-red-400 hover:text-red-600 text-sm"
+                >
+                  Supprimer
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {errorMessage && <div className="text-red-500 text-center mb-4">{errorMessage}</div>}
+
       <table className="w-full table-auto text-white border border-gray-600 mb-6 text-sm">
         <thead className="bg-gray-700">
           <tr>
-            <th className="p-2 border border-gray-600">#</th>
-            <th className="p-2 border border-gray-600">Enable</th>
-            <th className="p-2 border border-gray-600">Band</th>
-            <th className="p-2 border border-gray-600">Channel</th>
-            <th className="p-2 border border-gray-600">Fréquence</th>
-            <th className="p-2 border border-gray-600">Effet</th>
-            <th className="p-2 border border-gray-600">Couleur</th>
+            <th className="p-2 border">#</th>
+            <th className="p-2 border">Actif</th>
+            <th className="p-2 border">Bande</th>
+            <th className="p-2 border">Channel</th>
+            <th className="p-2 border">Fréquence</th>
+            <th className="p-2 border">Effet</th>
+            <th className="p-2 border">Couleur</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((row, i) => {
             const freq = bands[row.band][row.channel - 1] || "---";
-            return (
-              <tr
-                key={i}
-                className={`${row.active ? "bg-gray-800" : "bg-gray-900 opacity-50"}`}
-              >
-                <td className="p-2 border border-gray-700 font-mono">{i + 1}</td>
-                <td className="p-2 border border-gray-700">
-                  <label className="inline-flex items-center cursor-pointer">
-                    <span className="relative">
-                      <input
-                        type="checkbox"
-                        className="sr-only peer"
-                        checked={row.active}
-                        onChange={() => updateRow(i, "active", !row.active)}
-                      />
-                      <div className="w-12 h-6 bg-yellow-500 rounded-full peer peer-checked:bg-yellow-400 transition-all duration-200" />
-                      <div className="absolute left-0 top-0.5 w-5 h-5 bg-white rounded-full shadow-md transform peer-checked:translate-x-6 transition-all duration-200" />
-                    </span>
-                  </label>
-                </td>
+            const selectedEffect = [...defaultEffects, ...savedEffects].find(
+              (e) => e.name === row.effect
+            );
+            const isModifiable = selectedEffect?.isDefault;
 
-                <td className="p-2 border border-gray-700">
-                  <div className="flex gap-1 flex-wrap">
+            return (
+              <tr key={i} className={`${row.active ? "bg-gray-800" : "bg-gray-900 opacity-50"}`}>
+                <td className="p-2 border">{i + 1}</td>
+                <td className="p-2 border text-center">
+                  <input
+                    type="checkbox"
+                    checked={row.active}
+                    onChange={() => updateRow(i, "active", !row.active)}
+                  />
+                </td>
+                <td className="p-2 border">
+                  <div className="flex flex-wrap gap-1">
                     {bandKeys.map((b) => (
                       <button
                         key={b}
-                        onClick={() => updateRow(i, "band", b)}
                         disabled={!row.active}
+                        onClick={() => updateRow(i, "band", b)}
                         className={`px-2 py-1 border rounded w-8 ${
                           row.band === b
                             ? "bg-yellow-400 text-black font-bold"
@@ -117,14 +210,13 @@ export default function PilotTable() {
                     ))}
                   </div>
                 </td>
-
-                <td className="p-2 border border-gray-700">
-                  <div className="flex gap-1 flex-wrap">
+                <td className="p-2 border">
+                  <div className="flex flex-wrap gap-1">
                     {channelNumbers.map((c) => (
                       <button
                         key={c}
-                        onClick={() => updateRow(i, "channel", c)}
                         disabled={!row.active}
+                        onClick={() => updateRow(i, "channel", c)}
                         className={`px-2 py-1 border rounded w-8 ${
                           row.channel === c
                             ? "bg-yellow-400 text-black font-bold"
@@ -136,33 +228,46 @@ export default function PilotTable() {
                     ))}
                   </div>
                 </td>
-
-                <td className="p-2 border border-gray-700 font-mono text-green-400">
+                <td className="p-2 border text-green-400 text-center">
                   {row.active ? `${freq} MHz` : "---"}
                 </td>
-
-                <td className="p-2 border border-gray-700">
+                <td className="p-2 border">
                   <select
                     value={row.effect}
-                    onChange={(e) => updateRow(i, "effect", e.target.value)}
+                    onChange={(e) => handleEffectChange(i, e.target.value)}
                     disabled={!row.active}
-                    className="bg-gray-700 text-white p-1 rounded"
+                    className="bg-gray-700 text-white p-1 rounded w-full"
                   >
-                    {effects.map((eff) => (
-                      <option key={eff} value={eff}>
-                        {eff}
-                      </option>
-                    ))}
+                    <optgroup label="Effets par défaut">
+                      {defaultEffects.map((eff) => (
+                        <option key={eff.name} value={eff.name}>
+                          {eff.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                    {savedEffects.length > 0 && (
+                      <optgroup label="Effets enregistrés">
+                        {savedEffects.map((eff) => (
+                          <option key={eff.name} value={eff.name}>
+                            {eff.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
                   </select>
                 </td>
-
-                <td className="p-2 border border-gray-700 text-center">
-                  {row.effect === "Static" && row.active ? (
+                <td className="p-2 border text-center">
+                  {row.effect === "Static" && row.active && isModifiable ? (
                     <input
                       type="color"
                       value={row.color}
                       onChange={(e) => updateRow(i, "color", e.target.value)}
                       className="w-10 h-6 bg-transparent border-none"
+                    />
+                  ) : row.effect === "Static" && !isModifiable ? (
+                    <span
+                      className="inline-block w-6 h-6 rounded"
+                      style={{ backgroundColor: row.color }}
                     />
                   ) : (
                     "-"
@@ -173,15 +278,6 @@ export default function PilotTable() {
           })}
         </tbody>
       </table>
-
-      <div className="text-center">
-        <button
-          onClick={handleSend}
-          className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded font-semibold"
-        >
-          Enregistrer pour la course
-        </button>
-      </div>
     </div>
   );
 }

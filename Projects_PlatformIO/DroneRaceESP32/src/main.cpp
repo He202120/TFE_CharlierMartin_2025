@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include "config.h"
@@ -9,7 +10,7 @@
 
 #define DETECTION_THRESHOLD 600
 
-WiFiClient espClient;
+WiFiClientSecure espClient;
 PubSubClient client(espClient);
 RX5808 rx(RSSI_PIN, DATA_PIN, SS_PIN, CLOCK_PIN);
 KalmanFilter kalman[NUM_FREQS];
@@ -34,6 +35,9 @@ const int calibrationDuration = 5000;
 unsigned long lastEffectTime[NUM_FREQS] = {0};
 bool effectRunning[NUM_FREQS] = {false};
 
+unsigned long lastHelloTime = 0;
+bool detectionActive = false;
+
 void setup_wifi() {
   Serial.print("Connexion WiFi...");
   WiFi.begin(WIFI_SSID, WIFI_PASS);
@@ -44,8 +48,49 @@ void setup_wifi() {
   Serial.println("Connecté !");
 }
 
-void handleEffect(const String& effect) {
-  applyRaceEffect(effect, "");
+void handleEffect(const String& message) {
+  StaticJsonDocument<256> doc;
+  DeserializationError error = deserializeJson(doc, message);
+
+  if (error) {
+    Serial.print("Effet simple reçu : ");
+    Serial.println(message);
+    if (message == "Off") {
+      stopEffect();
+    } else {
+      applyRaceEffect(message, "");
+    }
+    return;
+  }
+
+  String effect = doc["effect"] | "";
+  String color = doc["color"] | "";
+  int speed = doc["speed"] | 50;
+  int intensity = doc["intensity"] | 100;
+
+  if (effect == "Off") {
+    stopEffect();
+    return;
+  }
+
+  Serial.println("Effet JSON reçu :");
+  Serial.println(" - effet     : " + effect);
+  Serial.println(" - couleur   : " + color);
+  Serial.println(" - vitesse   : " + String(speed));
+  Serial.println(" - intensité : " + String(intensity));
+
+  applyRaceEffect(effect, color, speed, intensity);
+}
+
+void handleRaceCommand(const String& cmd) {
+  if (cmd == "start") {
+    detectionActive = true;
+    Serial.println(">>> Détection ACTIVÉE");
+  } else if (cmd == "stop") {
+    detectionActive = false;
+    stopEffect();
+    Serial.println(">>> Détection désactivée");
+  }
 }
 
 void callback(char* topic, byte* payload, unsigned int length) {
@@ -88,6 +133,10 @@ void callback(char* topic, byte* payload, unsigned int length) {
       calibrated = false;
     }
   }
+
+  if (topicStr == "esp32/race") {
+    handleRaceCommand(message);
+  }
 }
 
 void reconnect() {
@@ -97,6 +146,7 @@ void reconnect() {
       client.subscribe(("esp32/" + deviceId + "/effect").c_str());
       client.subscribe(MQTT_TOPIC_SUB);
       client.subscribe(("esp32/" + deviceId + "/config").c_str());
+      client.subscribe("esp32/race");
       digitalWrite(LED_PIN, HIGH);
     } else {
       digitalWrite(LED_PIN, LOW);
@@ -118,17 +168,11 @@ void setup() {
   setup_wifi();
   Serial.println("WiFi prêt");
 
+  espClient.setInsecure();
+
   client.setServer(MQTT_SERVER, MQTT_PORT);
   client.setCallback(callback);
   delay(2000);
-
-  frequencies[0] = 5658;
-  effects[0] = "Static";
-  colors[0] = "#ffffff";
-  numFrequencies = 1;
-
-  calibrationStart = millis();
-  calibrated = false;
 
   Serial.println("Setup terminé");
 }
@@ -141,12 +185,25 @@ void loop() {
 
   client.loop();
 
-  if (numFrequencies == 0) {
+  if (!detectionActive) {
+    if (millis() - lastHelloTime >= 1000) {
+      lastHelloTime = millis();
+      client.publish("esp32/hello", deviceId.c_str());
+    }
     delay(5);
     return;
   }
 
-  if (!calibrated) {
+  if (numFrequencies == 0) {
+    rx.setFrequency(5800);
+    delay(30);
+    rx.readRssi();
+    delay(5);
+    int rssi = rx.readRssi();
+    char payload[64];
+    snprintf(payload, sizeof(payload), "%s:%d", deviceId.c_str(), rssi);
+    client.publish(MQTT_TOPIC_PUB, payload);
+  } else if (!calibrated) {
     static float rssiSums[NUM_FREQS] = {0};
     static int sampleCounts = 0;
 
@@ -164,22 +221,10 @@ void loop() {
 
     if (millis() - calibrationStart >= calibrationDuration) {
       for (int i = 0; i < numFrequencies; i++) {
-        Serial.print("Config reçue : Freq ");
-        Serial.print(frequencies[i]);
-        Serial.print(" - Effet: ");
-        Serial.println(effects[i]);
         baselineRSSI[i] = rssiSums[i] / sampleCounts;
       }
       calibrated = true;
-      Serial.println("Calibration terminée :");
-      for (int i = 0; i < numFrequencies; i++) {
-        Serial.print("Freq ");
-        Serial.print(frequencies[i]);
-        Serial.print(" → baseline : ");
-        Serial.println(baselineRSSI[i]);
-      }
     }
-
   } else {
     rx.setFrequency(frequencies[scanIndex]);
     delay(30);
@@ -189,33 +234,20 @@ void loop() {
     filteredRssiValues[scanIndex] = kalman[scanIndex].filter(rawRssiValues[scanIndex], 0);
 
     float threshold = (baselineRSSI[scanIndex] + 80.0f > 450.0f)
-                  ? baselineRSSI[scanIndex] + 80.0f
-                  : 450.0f;
-
-    Serial.print("Scan index → ");
-    Serial.print(scanIndex);
-    Serial.print(" | Freq ");
-    Serial.print(frequencies[scanIndex]);
-    Serial.print(" → RSSI: ");
-    Serial.print(filteredRssiValues[scanIndex]);
-    Serial.print(" / Seuil: ");
-    Serial.println(threshold);
+                      ? baselineRSSI[scanIndex] + 80.0f
+                      : 450.0f;
 
     if (filteredRssiValues[scanIndex] > threshold) {
       if (!effectRunning[scanIndex]) {
         applyRaceEffect(effects[scanIndex], colors[scanIndex]);
         lastEffectTime[scanIndex] = millis();
         effectRunning[scanIndex] = true;
-        Serial.print("Effet déclenché sur ");
-        Serial.println(frequencies[scanIndex]);
       }
     }
 
     if (effectRunning[scanIndex] && millis() - lastEffectTime[scanIndex] >= 2000) {
       stopEffect();
       effectRunning[scanIndex] = false;
-      Serial.print("Effet arrêté sur ");
-      Serial.println(frequencies[scanIndex]);
     }
 
     scanIndex = (scanIndex + 1) % numFrequencies;
@@ -228,6 +260,11 @@ void loop() {
         client.publish(MQTT_TOPIC_PUB, payload);
       }
     }
+  }
+
+  if (millis() - lastHelloTime >= 1000) {
+    lastHelloTime = millis();
+    client.publish("esp32/hello", deviceId.c_str());
   }
 
   delay(5);

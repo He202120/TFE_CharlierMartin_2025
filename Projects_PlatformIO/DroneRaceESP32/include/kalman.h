@@ -13,10 +13,10 @@ class KalmanFilter {
     void setProcessNoise(float noise);
 
   private:
-    float x;  // estimation
-    float p;  // estimation error covariance
-    float q;  // process noise
-    float r;  // measurement noise
+    float x;
+    float p;  
+    float q; 
+    float r;  
 };
 
 #endif

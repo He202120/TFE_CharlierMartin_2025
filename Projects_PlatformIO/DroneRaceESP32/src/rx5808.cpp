@@ -1,4 +1,3 @@
-
 #include "rx5808.h"
 #include <Arduino.h>
 
@@ -14,27 +13,41 @@ void RX5808::init() {
     pinMode(spiDataPin, OUTPUT);
     pinMode(slaveSelectPin, OUTPUT);
     pinMode(spiClockPin, OUTPUT);
+    digitalWrite(spiClockPin, LOW);
+    digitalWrite(spiDataPin, LOW);
+    digitalWrite(slaveSelectPin, HIGH);
 }
 
-void RX5808::setFrequency(uint16_t frequency) {
-    // Convertit la fréquence MHz vers valeur N pour RX5808
-    uint16_t N = (frequency - 479) / 2;
-    uint16_t command = 0b1000000000000000 | (N & 0x7FF); // MSB=1 + 11 bits pour N
-
-    // Transmission SPI "bit-bang"
-    digitalWrite(slaveSelectPin, LOW);
-    delayMicroseconds(1);
-
-    for (int i = 15; i >= 0; i--) {
+void RX5808::sendBits(uint32_t data, uint8_t bits) {
+    for (int i = 0; i < bits; i++) {
         digitalWrite(spiClockPin, LOW);
-        digitalWrite(spiDataPin, (command >> i) & 1);
+        digitalWrite(spiDataPin, (data >> i) & 0x01);
         delayMicroseconds(1);
         digitalWrite(spiClockPin, HIGH);
         delayMicroseconds(1);
     }
+}
 
+void RX5808::setFrequency(uint16_t freqMHz) {
+    uint32_t freq = freqMHz * 1000UL;
+    uint32_t f_osc = 8000000UL; 
+    uint32_t r_div = 8;
+
+    uint32_t divider = freq / (f_osc / r_div * 2);
+    uint16_t N = divider / 32;
+    uint8_t A = divider % 32;
+
+    uint32_t data = 0;
+    data |= (0x1 << 21); 
+    data |= (0 << 20);   
+    data |= ((uint32_t)N << 8);
+    data |= A;
+
+    digitalWrite(slaveSelectPin, LOW);
+    delayMicroseconds(1);
+    sendBits(data, 25); 
     digitalWrite(slaveSelectPin, HIGH);
-    delay(2);  // Temps de stabilisation du RX5808
+    delay(2);
 }
 
 uint16_t RX5808::readRssi() {

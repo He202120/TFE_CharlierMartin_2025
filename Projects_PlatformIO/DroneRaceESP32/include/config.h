@@ -11,7 +11,7 @@
 
 // Leds
 #define LED_STRIP_PIN 4
-#define NUM_LEDS 8
+#define NUM_LEDS 36
 
 // Réseau
 #define WIFI_SSID "APFlyToBeALight"
@@ -19,7 +19,7 @@
 
 // MQTT
 #define MQTT_SERVER "192.168.4.1"
-#define MQTT_PORT 1883
+#define MQTT_PORT 8883
 #define MQTT_USER "esp32_client"
 #define MQTT_PASS "esp32CLIENT"
 #define MQTT_TOPIC_SUB "esp32/config/rssi"

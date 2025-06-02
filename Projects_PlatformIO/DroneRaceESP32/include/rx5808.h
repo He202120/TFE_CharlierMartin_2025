@@ -7,7 +7,7 @@ class RX5808 {
 public:
     RX5808(uint8_t _rssiPin, uint8_t _spiDataPin, uint8_t _slaveSelectPin, uint8_t _spiClockPin);
     void init();
-    void setFrequency(uint16_t frequency);
+    void setFrequency(uint16_t freqMHz);
     uint16_t readRssi();
 
 private:
@@ -15,6 +15,8 @@ private:
     uint8_t spiDataPin;
     uint8_t slaveSelectPin;
     uint8_t spiClockPin;
+
+    void sendBits(uint32_t data, uint8_t bits);
 };
 
 #endif
